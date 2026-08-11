@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cindy 项目学习指南 · 思维导图</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; }
+  #mindmap { width: 100vw; height: 100vh; }
+  .toolbar {
+    position: fixed; top: 12px; right: 16px; z-index: 10;
+    font-family: -apple-system, "PingFang SC", system-ui, sans-serif;
+    font-size: 13px; color: #6b7280; user-select: none;
+  }
+  .toolbar a { color: #2563eb; text-decoration: none; margin-left: 10px; }
+  .toolbar a:hover { text-decoration: underline; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+<script src="https://cdn.jsdelivr.net/npm/markmap-view"></script>
+<script src="https://cdn.jsdelivr.net/npm/markmap-lib@0.18"></script>
+</head>
+<body>
+<div class="toolbar">
+  Cindy 项目学习指南
+  <a href="#" id="fit">适应窗口</a>
+  <a href="项目学习指南.md">查看原文</a>
+</div>
+<svg id="mindmap"></svg>
+
+<script type="text/template" id="markdown">
+# Cindy 项目学习指南
+
+## 1. 项目是什么
+- 开源、开箱即用的 AI Agent 客户端
+- 运行在用户本机，使用本地文件和已登录应用
+- 连接而非重造智能
+  - 首批兼容 Claude Code 与 Codex 两套 Harness
+  - 自研 Harness（Pi）也在接入
+  - 模型与 Harness 自由组合、随时切换
+- 一个任务可由多个 agent 规划、并行执行、独立 review（Orca）
+- 可培养
+  - Memory 记忆
+  - Skill 技能
+  - Automation 定时任务
+  - MCP 系统接入
+  - Plugin 插件改功能/界面
+  - Source Apache-2.0 可 fork
+- 能操作浏览器、电脑和手机
+- 支持从 IM 和定时任务派活
+- 仓库边界
+  - 本仓 = 客户端 monorepo（桌面 + 手机 + 共享 packages）
+  - 服务端在独立仓库
+  - 客户端免费；模型供给：官方登录 / 复用订阅 / 自接 API key
+- 双区域：cn 中国大陆版 / global 国际版
+
+## 2. 技术栈与开发工具
+### 基础环境
+- Node.js 22.x
+- pnpm 10.x workspace monorepo
+- Git LFS 必需
+- Apache-2.0
+- DCO：每个 commit 必须 Signed-off-by
+### 桌面端 apps/desktop
+- Electron 41 + Vite 6 + electron-forge
+- React 19 + Radix UI + TipTap + lucide-react
+- better-sqlite3 + drizzle-orm（90 个 migration）
+- Vitest 3 + Testing Library
+- TypeScript 5.7 + ESLint
+### 手机端 apps/mobile
+- Expo 56 / React Native 0.85
+- expo-router / expo-updates OTA 冷更
+- 同账号登录、远程控制桌面、镜像会话
+- 只直接依赖 5 个共享 package
+- 部分原生依赖打 patch
+### 共享 packages（约 30 个）
+- Agent 编排：maker-core / orca-workflow / maker-cc-manager / maker-remote-ssh / maker-scheduler
+- 跨端协议：device-link / device-link-protocol / plugin-protocol / slack-hook-protocol
+- 模型桥接：model-providers / anthropic-compat-proxy / anthropic-responses-bridge / responses-anthropic-bridge
+- MCP/工具：lizi-mcps / cindy-tools / browser-control-runtime
+- 文件/远程：file-browser-core / remote-file-service / github-client / gitlab-client
+- 业务能力：lizi-im / voice-input-core / embedding-client / heartbeat-client / project-context
+- 共享契约：maker-shared / auth-client
+### 随包二进制 apps/*-bin
+- claude-code / codex / ripgrep / android-platform-tools
+- 不入 git 历史
+- 版本由 tools/<kind>/latest.json pin
+- pnpm install postinstall 按平台下载
+### 工程脚本与门禁（45 个）
+- ensure-deps / ensure-agent-binaries / ensure-dev-runtime-assets
+- check-dco / install-dco-hook（DCO 签名）
+- check-i18n / check-i18n-glossary（术语表裁决一致性）
+- check-endpoint-literals（防硬编码 URL）
+- brand-terminology-guard（产品术语）
+- hardcoded-color-audit（强制语义 token / 双模式）
+- scheduler-ci-guard / test-gate-lock / test-workspaces（分层测试）
+- check-pr-design-basis / check-pr-template-rules
+### 开发入口
+- pnpm restart:desktop:remote --region=cn|global
+- --isolated 独立 userData 沙箱（跑未合入 migration 必用）
+- --passive 让出定时任务调度
+- --preserve-running 并行 dev 不停旧实例
+- dev 构建默认不上报 TapDB
+
+## 3. 顶层架构
+### 3.1 进程与信任边界
+- Renderer 不可信 UI
+  - 不 import electron/node:*
+  - 不读写磁盘/DB/凭证
+  - XSS 不能获得 Node/IPC 能力
+- Preload 最小权限桥
+  - 只暴露按用途命名的固定方法
+  - 剥离 IpcRendererEvent
+  - 不暴露 ipcRenderer.on/send/invoke 原语
+- IPC 授权边界
+  - handler 验证 sender/payload/归属/权限
+  - 身份从 event.sender 反查，不信任自报
+- Main 特权边界
+  - 系统 API/持久化/网络凭证/文件/进程管理/权限裁决
+  - 禁止运行时动态 import()
+  - 依赖一律顶层静态 import
+- 安全配置
+  - sandbox/contextIsolation/webSecurity: true
+  - nodeIntegration: false
+  - webview-security.ts 在 will-attach-webview 覆盖安全选项
+  - CSP 由 main/security/csp.ts 统一注入
+  - 打包保留 Electron Fuses
+### 3.2 三层代码职责
+- renderer 组件渲染/交互状态/展示编排（无特权）
+- main Electron 生命周期/IPC 授权/OS 集成/持久化/特权副作用
+- shared 跨进程协议/类型/常量/纯函数（零 IO）
+- packages 可复用领域逻辑（接口注入宿主能力，不反向依赖）
+### 3.3 主界面布局树
+- 真身：shared/layoutTree.ts + main/layout/LayoutStore.ts
+- 递归 split/pane 树，零依赖纯函数，renderer 与 main 共用校验
+- 面板身份只认 panelKind（禁用位置充当身份）
+- chat-main 恰好一个/始终可见/不可关闭/不可折叠/最小宽 400px
+- 用户级配置，首帧同步就位（禁先画默认再跳）
+- 未知 panelKind 保留存档不渲染，重新注入原位恢复
+### 3.4 本地数据库
+- better-sqlite3 + drizzle-orm
+- schema: main/localDb/schema.ts
+- 90 个 migration（drizzle/*.sql）
+- 多账号架构
+- 未合入 migration 必须在 --isolated 沙箱跑
+- 历史 migration 不可手改
+
+## 4. 核心子系统
+### 4.1 maker-core Agent 编排核心（最重要）
+- 零 Electron 依赖，约 219 文件 13 万行
+- 设计模式
+  - Template Method：BaseAgent 抽象，子类按 capabilities 覆盖，默认抛 NotSupportedError
+  - Translator：vendor 事件无丢失无错序映射进 AgentEvent union
+  - AsyncQueue：先入队、消费端 async 流式吐，热路径不阻塞
+  - Session 注册中心 + Agent 路由（maker.ts）
+- 三类 Agent
+  - Claude Code（agents/claude-code/）
+  - Codex（agents/codex/）
+  - Pi（agents/pi/，自研 Harness）
+- 四项核心指标不变量
+  - 缓存率：请求前缀逐字节稳定，易变内容只进 per-call
+  - 性能：热路径不塞同步阻塞/深拷贝/串行 await
+  - 准确性：translator 不丢事件不错序，model 路由禁裸别名
+  - review 前实测：PR 必须写明影响/方法/结论
+- 两条硬性原则
+  - 优先用代码保证确定性而非 prompt
+  - system prompt 改动需 owner 确认（宪法层）
+### 4.2 Orca 多 Agent 协同
+- Lead session 拆任务/派活/验收/汇总
+- 多个 Worker session 并行/串行执行（完整会话，非 subagent）
+- 数据模型：sessions.orca_role + orca_teams + orca_workers
+- 控制面：cindy_orca MCP 16 工具（13 team + 3 只读诊断）
+- 四个 main 侧 service
+  - OrcaLifecycleService
+  - OrcaWorkerCreationService
+  - OrcaTeamService
+  - OrcaInterAgentDispatcher
+- 关键不变量
+  - 工具可见性不是权限边界（handler 拒绝）
+  - Codex MCP context 路由 fail-closed（只认 threadId）
+  - worker 控制入口按 caller Lead 身份归属校验
+  - Orca Worker 派单不得由原生 subagent 冒充
+  - Model 不可中途换，effort 可调
+  - 无损 idle hibernate（释放 runtime 保留记录）
+- 未来方向：side activity 统一外壳（worker/side_chat/workflow_run）
+  - 三态拆分：对象在不在 / UI 显不显示 / 后台醒没醒
+### 4.3 插件系统 cindy-brain/Ghost
+- .cindy 包以 ghost.json 为身份卡（kind: chip）
+- 运行时沙箱
+  - 每插件独立 Electron 沙箱进程 + 专属 session partition
+  - 禁直接访问 Node/文件系统/网络
+  - 主机按 webContents 反查真实 ghostId，不信任自报
+- 能力 slot（权限即授权边界，prompt 不构成边界）
+  - network 白名单域名，凭证主机注入无明文读回
+  - notify / badge / confirm / fs
+  - skill 唯一越出沙箱（声明一致性 + 链接对账）
+  - agent / errand（bypassPermissions 协议层不存在）
+  - iosSimulator / cindy
+- 存量插件兼容（红线）
+  - 向下兼容，不要求重装/重确认/重配置
+  - 做不到必须自带自动迁移
+  - 改基座走白名单确认门
+- 资源交接：grant/deposit/ledger，禁暴露绝对路径
+- 模型调用走 Cindy 统一通道
+- 渐进式发现：ghost_list/ghost_info/ghost_call + FORGE_GUIDE
+### 4.4 device-link 跨设备远程控制
+- packages/device-link + device-link-protocol
+- 零依赖，WS 实现由 host 注入
+- protocol.ts envelope 协议
+- allowlist.ts IPC 隧道 deny-by-default
+- transport.ts 重连/心跳
+- 被控端为真相源，控制端只经隧道路由
+- 老被控端无 channel 回 CHANNEL_NOT_ALLOWED，fail-closed 置灰
+### 4.5 模型桥接链路
+- model-providers 供应商目录 + 路由抽象
+- anthropic-compat-proxy 本地回环代理剥离专有字段
+- anthropic-responses-bridge Anthropic ↔ OpenAI Responses 转换
+- responses-anthropic-bridge 反向桥 + SSE 回译
+- Codex developerInstructions 两条通道
+  - cindy_gateway 走 HTTP Responses 可改写正文
+  - cindy_openai 走 WebSocket 只做 socket 隧道
+  - 每 thread 只选一个投递来源
+
+## 5. 工程规范与工作流
+### 5.1 提交门禁（硬性）
+- pnpm test:unit 全部单元测试通过
+- 每个 package 跑 --if-present typecheck 通过
+- 每个 commit 带 Signed-off-by（DCO）
+- 不得跳过/删除/弱化测试制造通过
+- 高风险改动追加 pnpm test:all
+### 5.2 规则文档体系
+- dev-rules 工程（架构/Electron/maker-core/Orca/插件/DB/协议/日志/…）
+- product-rules 产品（核心原则/review/区域/命名/bot 对齐）
+- design-rules 设计（DESIGN.md 权威视觉规范 + 双模式门槛）
+- AGENTS.md = Codex/Claude 共用指令正本（CLAUDE.md 仅 @AGENTS.md）
+- 读取时机触发：做对应改动前必读
+### 5.3 贯穿性原则
+- PR-first，非 draft PR 触发自动 review + client-ci 门禁
+- 双模式 UI 必须同时实现 Light + Dark，颜色走语义 token
+- 术语表 i18n/GLOSSARY.md，已裁决照用不自造
+- 任务/对话/消息：session 叫「任务」，对话只用于任务内交流，单条叫「消息」
+- 日志脱敏 deny-by-default，脱敏规则只增不减
+- 凭证/令牌/授权文件不得写入仓库
+
+## 6. 技术亮点
+- 连接层哲学：忠实传递底层能力不在中间损失
+- 代码优先于 prompt 的确定性
+- prompt cache 前缀稳定性的工程化守护
+- 多 Harness 统一抽象（BaseAgent + Translator）
+- Orca 多 Agent 协同工程化（竞态/越权/消息丢失建成不变量）
+- Electron 安全纵深（XSS 不能升级权限）
+- 插件沙箱 + 能力 slot + 存量兼容红线
+- 分层测试与门禁自动化（规则变可执行检查）
+- 布局树作为用户级配置（首帧同步 + 位置记忆）
+- 双区域与多账号的工程化落地
+
+## 7. 推荐学习路径
+- 先读：README.zh-CN → AGENTS.md → repo-map.md
+- 架构主线：architecture-invariants → electron-security → maker-core-and-agent-behavior → orca-team-architecture
+- 源码入门：base-agent.ts → claude-code/index.ts + translator.ts → maker.ts → orca*.ts
+- 插件系统：plugin-security → cindy-brain/*Slot.ts → GhostRuntime.ts
+- 跑起来：CONTRIBUTING.md → restart:desktop:remote --region=global --isolated
+- 贡献：development-workflow + PR 模板，首 PR 从小改动开始
+
+## 8. 关键文件速查
+- 项目指令正本：AGENTS.md
+- 仓库地图：docs/dev-rules/repo-map.md
+- Agent 抽象：maker-core/src/agents/base-agent.ts
+- Session 注册中心：maker-core/src/maker.ts
+- Claude system prompt：maker-core/src/agents/claude-code/index.ts
+- 事件归一化：maker-core/src/agents/*/translator.ts
+- token/缓存计量：maker-core/src/agents/shared/usage-tracker.ts
+- 布局树：shared/layoutTree.ts + main/layout/LayoutStore.ts
+- DB schema：main/localDb/schema.ts
+- DB migration：drizzle/*.sql（90 个）
+- Orca 服务：main/maker-ipc/orca*.ts
+- Orca MCP：lizi-mcps/src/orca/server.ts
+- 插件运行时：cindy-brain/runtime/GhostRuntime.ts + GhostManager.ts
+- 插件身份卡：shared/ghost.ts
+- 插件手册：cindy-brain/forge.ts 的 FORGE_GUIDE
+- device-link 协议：device-link/src/protocol.ts + allowlist.ts
+- Electron 安全：main/security/csp.ts + webview-security.ts
+- 运行时 pin：tools/<kind>/latest.json
+</script>
+
+<script>
+  const md = document.getElementById('markdown').textContent;
+  const { Transformer } = markmap;
+  const transformer = new Transformer();
+  const { root } = transformer.transform(md);
+
+  const { Markmap } = markmap;
+  const mm = Markmap.create(document.getElementById('mindmap'), {
+    maxWidth: 320,
+    duration: 300,
+    spacingHorizontal: 80,
+    spacingVertical: 12,
+    paddingX: 12,
+    autoFit: true,
+  }, root);
+
+  document.getElementById('fit').addEventListener('click', (e) => {
+    e.preventDefault();
+    mm.fit();
+  });
+
+  // 初始自动适应
+  setTimeout(() => mm.fit(), 400);
+</script>
+</body>
+</html>
